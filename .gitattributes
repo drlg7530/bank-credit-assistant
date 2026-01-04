@@ -1,0 +1,1 @@
+models/embedding/qwen/Qwen3-Embedding-0___6B/model.safetensors filter=lfs diff=lfs merge=lfs -text
