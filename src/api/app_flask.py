@@ -250,8 +250,8 @@ def _generate_streaming_response(question, role, enable_rewrite, enable_rerank, 
         from config.prompts import QUERY_REWRITE_PROMPT, TODAY
         from src.rag.query import call_llm
         
-        # 启用流式输出配置
-        RAG_CONFIG['enable_streaming'] = True
+        # 读取流式输出配置（不强制启用）
+        # RAG_CONFIG['enable_streaming'] 的值由配置文件决定
         
         # 发送初始信息（立即发送）
         start_msg = f"data: {json.dumps({'type': 'start', 'message': '开始处理查询...'}, ensure_ascii=False)}\n\n"
@@ -387,6 +387,7 @@ def _generate_streaming_response(question, role, enable_rewrite, enable_rerank, 
 def api_query_stream():
     """
     流式查询API接口（Server-Sent Events）
+    注意：此端点强制使用流式输出，如需根据配置控制，请使用 /api/query 端点
     
     请求参数:
         question: 用户问题
@@ -414,6 +415,7 @@ def api_query_stream():
         session_id = data.get('session_id', None)
         user_id = data.get('user_id', 10000)
         
+        # 此端点强制使用流式输出
         return Response(
             stream_with_context(_generate_streaming_response(
                 question, role, enable_rewrite, enable_rerank,

@@ -565,8 +565,9 @@
             `;
 
             try {
-                // 使用流式API
-                const response = await fetch('/api/query/stream', {
+                // 使用 /api/query 端点，根据配置决定是否使用流式输出
+                // 后端会根据 RAG_CONFIG['enable_streaming'] 配置决定返回流式还是非流式响应
+                const response = await fetch('/api/query', {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json',
@@ -582,6 +583,10 @@
                 if (!response.ok) {
                     throw new Error(`HTTP error! status: ${response.status}`);
                 }
+
+                // 检查响应类型：流式（text/event-stream）还是普通JSON
+                const contentType = response.headers.get('content-type') || '';
+                const isStreaming = contentType.includes('text/event-stream');
 
                 // 创建结果卡片
                 let resultCard = document.createElement('div');
@@ -620,10 +625,13 @@
 
                 const answerDiv = document.getElementById('streamingAnswer');
                 const resultInfo = document.getElementById('resultInfo');
-                let fullAnswer = '';
-                let metadata = {};
 
-                // 读取流式响应
+                if (isStreaming) {
+                    // 处理流式响应
+                    let fullAnswer = '';
+                    let metadata = {};
+
+                    // 读取流式响应
                 const reader = response.body.getReader();
                 const decoder = new TextDecoder();
                 let buffer = '';
@@ -763,22 +771,45 @@
                     // 滚动到顶部
                     resultContent.scrollTop = 0;
                 }
-                
-                // 如果最终没有收到done消息，显示错误
-                if (!metadata.session_id) {
-                    console.error('未收到完成消息，可能流式响应中断');
-                    answerDiv.textContent = fullAnswer || '响应中断，请重试';
+                } else {
+                    // 处理普通JSON响应
+                    const data = await response.json();
+                    
+                    // 隐藏加载状态
                     document.getElementById('loading').classList.remove('show');
                     document.getElementById('submitBtn').disabled = false;
-                }
 
-                // 显示结果信息
-                resultInfo.style.display = 'grid';
-                document.getElementById('loading').classList.remove('show');
-                document.getElementById('submitBtn').disabled = false;
-                
-                // 滚动到顶部
-                resultContent.scrollTop = 0;
+                    if (data.success) {
+                        // 显示结果
+                        answerDiv.textContent = data.answer || '';
+                        document.getElementById('infoIntent').textContent = data.intent || 'N/A';
+                        document.getElementById('infoRouteTo').textContent = data.route_to || 'N/A';
+                        document.getElementById('infoModule').textContent = data.module || 'N/A';
+                        
+                        // 显示监控统计
+                        if (data.monitor) {
+                            const monitorContent = `[LLM Monitor(完整请求)] 总Token数: ${data.monitor.total_tokens || 0} (输入: ${data.monitor.total_prompt_tokens || 0}, 输出: ${data.monitor.total_completion_tokens || 0})  总耗时: ${Math.round(data.monitor.total_latency_ms || 0)} ms  调用次数: ${data.monitor.call_count || 0}`;
+                            document.getElementById('infoMonitorContent').textContent = monitorContent;
+                            document.getElementById('infoMonitor').style.display = 'block';
+                        }
+                        
+                        // 显示改写后的查询
+                        if (data.rewritten_query) {
+                            document.getElementById('infoRewrittenContent').textContent = data.rewritten_query;
+                            document.getElementById('infoRewritten').style.display = 'block';
+                        }
+                        
+                        resultInfo.style.display = 'grid';
+                        
+                        // 滚动到顶部
+                        resultContent.scrollTop = 0;
+                    } else {
+                        // 显示错误
+                        answerDiv.textContent = '查询失败: ' + (data.error || '未知错误');
+                        document.getElementById('error').textContent = '查询失败: ' + (data.error || '未知错误');
+                        document.getElementById('error').classList.add('show');
+                    }
+                }
             } catch (error) {
                 document.getElementById('loading').classList.remove('show');
                 document.getElementById('submitBtn').disabled = false;
