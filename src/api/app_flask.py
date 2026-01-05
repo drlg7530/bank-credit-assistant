@@ -162,7 +162,31 @@ def api_query():
         print(f"  Session ID: {session_id}")
         print(f"  用户ID: {user_id}")
         
-        # 调用查询函数（添加内部异常处理）
+        # 检查是否启用流式输出（优先使用请求参数，其次使用配置）
+        from config.rag_config import RAG_CONFIG
+        # 如果请求中没有传enable_streaming参数，则使用配置文件中的值
+        if 'enable_streaming' in data:
+            enable_streaming = data.get('enable_streaming')
+        else:
+            enable_streaming = RAG_CONFIG.get('enable_streaming', False)
+        
+        print(f"  流式输出: {enable_streaming} (配置值: {RAG_CONFIG.get('enable_streaming', False)})")
+        
+        # 如果启用流式输出，直接返回流式响应（不先执行查询）
+        if enable_streaming:
+            return Response(
+                stream_with_context(_generate_streaming_response(
+                    question, role, enable_rewrite, enable_rerank, 
+                    session_id, user_id
+                )),
+                mimetype='text/event-stream',
+                headers={
+                    'Cache-Control': 'no-cache',
+                    'X-Accel-Buffering': 'no'
+                }
+            )
+        
+        # 非流式输出：调用查询函数
         try:
             result = query(
                 question=question,
@@ -181,23 +205,6 @@ def api_query():
                 'success': False,
                 'error': f'查询执行失败: {str(query_error)}'
             }), 500
-        
-        # 检查是否启用流式输出
-        enable_streaming = data.get('enable_streaming', False)
-        
-        # 如果启用流式输出，返回流式响应
-        if enable_streaming:
-            return Response(
-                stream_with_context(_generate_streaming_response(
-                    question, role, enable_rewrite, enable_rerank, 
-                    session_id, user_id
-                )),
-                mimetype='text/event-stream',
-                headers={
-                    'Cache-Control': 'no-cache',
-                    'X-Accel-Buffering': 'no'
-                }
-            )
         
         # 返回结果（非流式）
         return jsonify({
