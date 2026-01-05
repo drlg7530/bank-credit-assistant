@@ -255,7 +255,7 @@ def _generate_streaming_response(question, role, enable_rewrite, enable_rerank, 
         
         # 发送初始信息（立即发送）
         start_msg = f"data: {json.dumps({'type': 'start', 'message': '开始处理查询...'}, ensure_ascii=False)}\n\n"
-        print(f"[流式响应] 发送start消息: {start_msg[:100]}...")
+        # print(f"[流式响应] 发送start消息: {start_msg[:100]}...")
         yield start_msg
         
         # 步骤0：写入L1（原始query）
@@ -303,7 +303,7 @@ def _generate_streaming_response(question, role, enable_rewrite, enable_rerank, 
         
         # 发送元数据
         metadata_msg = f"data: {json.dumps({'type': 'metadata', 'intent': route_result.get('intent'), 'route_to': route_result.get('route_to'), 'module': route_result.get('module')}, ensure_ascii=False)}\n\n"
-        print(f"[流式响应] 发送metadata消息")
+        # print(f"[流式响应] 发送metadata消息")
         yield metadata_msg
         
         # 步骤6：流式生成答案
@@ -323,7 +323,7 @@ def _generate_streaming_response(question, role, enable_rewrite, enable_rerank, 
                 search_results.append(search_result)
             
             domain = route_result.get('domain', 'policy')
-            print(f"[流式响应] 准备生成答案，搜索结果数量: {len(search_results)}, domain: {domain}")
+            # print(f"[流式响应] 准备生成答案，搜索结果数量: {len(search_results)}, domain: {domain}")
             try:
                 chunk_count = 0
                 for chunk in generate_answer_stream(
@@ -334,12 +334,12 @@ def _generate_streaming_response(question, role, enable_rewrite, enable_rerank, 
                     answer_chunks.append(chunk)
                     chunk_count += 1
                     chunk_msg = f"data: {json.dumps({'type': 'chunk', 'content': chunk}, ensure_ascii=False)}\n\n"
-                    if chunk_count <= 3:  # 只打印前3个chunk的日志
-                        print(f"[流式响应] 发送chunk #{chunk_count}: {chunk[:50]}...")
+                    # if chunk_count <= 3:  # 只打印前3个chunk的日志
+                    #     print(f"[流式响应] 发送chunk #{chunk_count}: {chunk[:50]}...")
                     yield chunk_msg
-                print(f"[流式响应] 总共发送了 {chunk_count} 个chunk")
-                if chunk_count == 0:
-                    print(f"[流式响应] ⚠️ 警告：没有收到任何chunk，可能流式生成失败")
+                # print(f"[流式响应] 总共发送了 {chunk_count} 个chunk")
+                # if chunk_count == 0:
+                #     print(f"[流式响应] ⚠️ 警告：没有收到任何chunk，可能流式生成失败")
             except Exception as e:
                 error_msg = f"流式生成答案失败: {str(e)}"
                 yield f"data: {json.dumps({'type': 'error', 'message': error_msg}, ensure_ascii=False)}\n\n"
@@ -355,11 +355,11 @@ def _generate_streaming_response(question, role, enable_rewrite, enable_rerank, 
         full_answer = ''.join(answer_chunks)
         
         # 打印最终完整的LLM重组内容（方便排查问题）
-        print(f"\n{'='*80}")
-        print(f"[流式响应] 最终完整的LLM重组内容:")
-        print(f"{'='*80}")
-        print(full_answer)
-        print(f"{'='*80}\n")
+        # print(f"\n{'='*80}")
+        # print(f"[流式响应] 最终完整的LLM重组内容:")
+        # print(f"{'='*80}")
+        # print(full_answer)
+        # print(f"{'='*80}\n")
         
         # 保存到L1
         memory_manager.save_assistant_answer(
@@ -375,7 +375,7 @@ def _generate_streaming_response(question, role, enable_rewrite, enable_rerank, 
         
         # 发送完成信息（包含监控统计）
         done_msg = f"data: {json.dumps({'type': 'done', 'session_id': session_id, 'turn_id': turn_id, 'monitor': monitor_stats}, ensure_ascii=False)}\n\n"
-        print(f"[流式响应] 发送done消息")
+        # print(f"[流式响应] 发送done消息")
         yield done_msg
         
     except Exception as e:

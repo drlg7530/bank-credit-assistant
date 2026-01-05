@@ -423,18 +423,19 @@ def call_bailian_api_stream(prompt: str, module: str = "rag_query") -> Generator
                         if chunk_text:
                             full_content += chunk_text
                             chunk_count += 1
-                            if chunk_count <= 3:  # 只打印前3个chunk的日志
-                                print(f"[call_bailian_api_stream] 收到chunk #{chunk_count} (长度: {len(chunk_text)}): {chunk_text[:50]}...")
+                            # if chunk_count <= 3:  # 只打印前3个chunk的日志
+                            #     print(f"[call_bailian_api_stream] 收到chunk #{chunk_count} (长度: {len(chunk_text)}): {chunk_text[:50]}...")
                             yield chunk_text
                         else:
                             # 检查是否有finish_reason（表示流式结束）
                             finish_reason = choice.get('finish_reason')
-                            if finish_reason:
-                                print(f"[call_bailian_api_stream] 流式结束，finish_reason: {finish_reason}")
-                else:
-                    # 检查响应结构
-                    if chunk_count == 0:
-                        print(f"[call_bailian_api_stream] 响应中没有output字段，响应结构: {list(response.keys())}")
+                            # if finish_reason:
+                            #     print(f"[call_bailian_api_stream] 流式结束，finish_reason: {finish_reason}")
+                            pass
+                # else:
+                #     # 检查响应结构
+                #     if chunk_count == 0:
+                #         print(f"[call_bailian_api_stream] 响应中没有output字段，响应结构: {list(response.keys())}")
                 
                 # 提取token信息（从最后一个响应中）
                 try:
@@ -447,10 +448,10 @@ def call_bailian_api_stream(prompt: str, module: str = "rag_query") -> Generator
                 error_msg = f"百炼API流式调用失败: {response.status_code}"
                 if hasattr(response, 'message'):
                     error_msg += f" - {response.message}"
-                print(f"[call_bailian_api_stream] API错误: {error_msg}")
+                # print(f"[call_bailian_api_stream] API错误: {error_msg}")
                 raise Exception(error_msg)
         
-        print(f"[call_bailian_api_stream] 流式调用完成，总共收到 {chunk_count} 个chunk，完整内容长度: {len(full_content)}")
+        # print(f"[call_bailian_api_stream] 流式调用完成，总共收到 {chunk_count} 个chunk，完整内容长度: {len(full_content)}")
         
         # 设置token信息到线程本地存储（供监控装饰器使用）
         set_token_info(prompt_tokens, completion_tokens)
@@ -458,9 +459,9 @@ def call_bailian_api_stream(prompt: str, module: str = "rag_query") -> Generator
     except Exception as e:
         # 如果流式调用失败，抛出异常
         error_msg = f"百炼API流式调用异常: {e}"
-        print(f"[call_bailian_api_stream] 异常: {error_msg}")
-        import traceback
-        traceback.print_exc()
+        # print(f"[call_bailian_api_stream] 异常: {error_msg}")
+        # import traceback
+        # traceback.print_exc()
         raise Exception(error_msg)
 
 
@@ -841,19 +842,19 @@ def generate_answer_stream(
     
     # 调用大模型生成答案（流式输出）
     try:
-        print(f"[generate_answer_stream] 开始调用流式LLM，prompt长度: {len(prompt)}")
+        # print(f"[generate_answer_stream] 开始调用流式LLM，prompt长度: {len(prompt)}")
         chunk_count = 0
         for chunk in call_llm_stream(prompt, module="rag_answer"):
             chunk_count += 1
-            if chunk_count <= 3:  # 只打印前3个chunk的日志
-                print(f"[generate_answer_stream] 收到chunk #{chunk_count}: {chunk[:50]}...")
+            # if chunk_count <= 3:  # 只打印前3个chunk的日志
+            #     print(f"[generate_answer_stream] 收到chunk #{chunk_count}: {chunk[:50]}...")
             yield chunk
-        print(f"[generate_answer_stream] 流式生成完成，总共收到 {chunk_count} 个chunk")
-        if chunk_count == 0:
-            print(f"[generate_answer_stream] ⚠️ 警告：没有收到任何chunk")
+        # print(f"[generate_answer_stream] 流式生成完成，总共收到 {chunk_count} 个chunk")
+        # if chunk_count == 0:
+        #     print(f"[generate_answer_stream] ⚠️ 警告：没有收到任何chunk")
     except Exception as e:
         error_msg = f"生成答案时出错: {e}"
-        print(f"[generate_answer_stream] 异常: {error_msg}")
+        # print(f"[generate_answer_stream] 异常: {error_msg}")
         yield error_msg
 
 # ============================================================================
