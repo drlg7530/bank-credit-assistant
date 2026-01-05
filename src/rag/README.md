@@ -22,6 +22,8 @@ RAG_CONFIG = {
     'enable_rewrite': True,          # 是否启用query改写
     'enable_rerank': True,           # 是否启用重排序
     'rerank_method': 'similarity',  # 重排序方法：'similarity' 或 'bm25'
+    'enable_streaming': True,        # 是否启用流式输出（默认True）
+                                     # 仅对最后一次LLM总结结果调用使用流式输出，提升用户体验
 }
 ```
 
@@ -176,6 +178,29 @@ update_rag_config(rerank_method='bm25')
 # 修改重排序后保留的文档数
 update_rag_config(rerank_top_k=10)
 ```
+
+## 🌊 流式输出配置
+
+流式输出功能默认开启，仅对最后一次LLM总结结果调用使用流式输出，提升用户体验。
+
+### 配置方式
+
+编辑 `config/rag_config.py`：
+
+```python
+RAG_CONFIG = {
+    'enable_streaming': True,        # 是否启用流式输出（默认True）
+                                     # 仅对最后一次LLM总结结果调用使用流式输出
+}
+```
+
+### 说明
+
+- **流式输出位置**：仅在 `generate_answer()` 函数调用LLM生成最终答案时使用流式输出
+- **其他LLM调用**：query改写、意图分类等其他LLM调用不使用流式输出
+- **支持情况**：
+  - ✅ **百炼API（dashscope）**：完全支持流式输出
+  - ⚠️ **本地LLM（transformers）**：暂不支持真正的流式输出，会降级为普通调用
 
 ## 📝 权限控制
 

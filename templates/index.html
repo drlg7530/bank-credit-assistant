@@ -565,7 +565,8 @@
             `;
 
             try {
-                const response = await fetch('/api/query', {
+                // 使用流式API
+                const response = await fetch('/api/query/stream', {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json',
@@ -578,64 +579,206 @@
                     })
                 });
 
-                const data = await response.json();
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
 
-                // 隐藏加载状态
-                document.getElementById('loading').classList.remove('show');
-                document.getElementById('submitBtn').disabled = false;
-
-                if (data.success) {
-                    // 显示结果
-                    resultContent.innerHTML = `
-                        <div class="result-card">
-                            <h3>📋 查询结果</h3>
-                            <div class="answer">${escapeHtml(data.answer)}</div>
-                            <div class="result-info">
-                                <div class="info-item" style="grid-column: 1 / -1; margin-bottom: 10px; padding-bottom: 10px; border-bottom: 1px solid #e0e0e0;">
-                                    <label style="font-size: 12px; color: #999;">以下内容仅测试展示</label>
-                                </div>
-                                <div class="info-item">
-                                    <label>意图类型</label>
-                                    <span>${data.intent || 'N/A'}</span>
-                                </div>
-                                <div class="info-item">
-                                    <label>路由目标</label>
-                                    <span>${data.route_to || 'N/A'}</span>
-                                </div>
-                                <div class="info-item">
-                                    <label>处理模块</label>
-                                    <span>${data.module || 'N/A'}</span>
-                                </div>
-                                ${data.monitor ? `
-                                <div class="info-item" style="grid-column: 1 / -1; margin-top: 10px; padding-top: 10px; border-top: 1px solid #e0e0e0;">
-                                    <label style="font-size: 13px; color: #666; margin-bottom: 8px;">LLM监控统计</label>
-                                    <span style="font-size: 13px; color: #333; font-family: 'Courier New', monospace; white-space: pre-wrap; word-break: break-all;">
-[LLM Monitor(完整请求)] 总Token数: ${data.monitor.total_tokens || 0} (输入: ${data.monitor.total_prompt_tokens || 0}, 输出: ${data.monitor.total_completion_tokens || 0})  总耗时: ${Math.round(data.monitor.total_latency_ms || 0)} ms  调用次数: ${data.monitor.call_count || 0}
-                                    </span>
-                                </div>
-                                ` : ''}
-                                ${data.rewritten_query ? `
-                                <div class="info-item" style="grid-column: 1 / -1;">
-                                    <label>改写后的查询</label>
-                                    <span>${escapeHtml(data.rewritten_query)}</span>
-                                </div>
-                                ` : ''}
-                            </div>
+                // 创建结果卡片
+                let resultCard = document.createElement('div');
+                resultCard.className = 'result-card';
+                resultCard.innerHTML = `
+                    <h3>📋 查询结果</h3>
+                    <div class="answer" id="streamingAnswer"></div>
+                    <div class="result-info" id="resultInfo" style="display: none;">
+                        <div class="info-item" style="grid-column: 1 / -1; margin-bottom: 10px; padding-bottom: 10px; border-bottom: 1px solid #e0e0e0;">
+                            <label style="font-size: 12px; color: #999;">以下内容仅测试展示</label>
                         </div>
-                    `;
+                        <div class="info-item">
+                            <label>意图类型</label>
+                            <span id="infoIntent">N/A</span>
+                        </div>
+                        <div class="info-item">
+                            <label>路由目标</label>
+                            <span id="infoRouteTo">N/A</span>
+                        </div>
+                        <div class="info-item">
+                            <label>处理模块</label>
+                            <span id="infoModule">N/A</span>
+                        </div>
+                        <div class="info-item" id="infoMonitor" style="display: none; grid-column: 1 / -1; margin-top: 10px; padding-top: 10px; border-top: 1px solid #e0e0e0;">
+                            <label style="font-size: 13px; color: #666; margin-bottom: 8px;">LLM监控统计</label>
+                            <span id="infoMonitorContent" style="font-size: 13px; color: #333; font-family: 'Courier New', monospace; white-space: pre-wrap; word-break: break-all;"></span>
+                        </div>
+                        <div class="info-item" id="infoRewritten" style="display: none; grid-column: 1 / -1;">
+                            <label>改写后的查询</label>
+                            <span id="infoRewrittenContent"></span>
+                        </div>
+                    </div>
+                `;
+                resultContent.innerHTML = '';
+                resultContent.appendChild(resultCard);
+
+                const answerDiv = document.getElementById('streamingAnswer');
+                const resultInfo = document.getElementById('resultInfo');
+                let fullAnswer = '';
+                let metadata = {};
+
+                // 读取流式响应
+                const reader = response.body.getReader();
+                const decoder = new TextDecoder();
+                let buffer = '';
+
+                while (true) {
+                    const { done, value } = await reader.read();
+                    if (done) {
+                        console.log('流式响应读取完成，剩余buffer:', buffer);
+                        break;
+                    }
+
+                    buffer += decoder.decode(value, { stream: true });
+                    console.log('接收到数据块，当前buffer长度:', buffer.length);
+                    
+                    // SSE格式：每个消息以 \n\n 结尾
+                    let parts = buffer.split('\n\n');
+                    buffer = parts.pop() || ''; // 保留最后一个不完整的消息
+
+                    for (const part of parts) {
+                        if (!part.trim()) continue; // 跳过空行
+                        
+                        // 查找 data: 开头的行
+                        const lines = part.split('\n');
+                        for (const line of lines) {
+                            if (line.startsWith('data: ')) {
+                                try {
+                                    const jsonStr = line.slice(6);
+                                    console.log('解析SSE数据:', jsonStr);
+                                    const data = JSON.parse(jsonStr);
+                                    console.log('解析后的数据:', data);
+                                    
+                                    if (data.type === 'start') {
+                                        // 开始处理
+                                        answerDiv.textContent = '正在处理查询...';
+                                        console.log('收到start消息');
+                                    } else if (data.type === 'metadata') {
+                                        // 元数据
+                                        metadata.intent = data.intent;
+                                        metadata.route_to = data.route_to;
+                                        metadata.module = data.module;
+                                        document.getElementById('infoIntent').textContent = data.intent || 'N/A';
+                                        document.getElementById('infoRouteTo').textContent = data.route_to || 'N/A';
+                                        document.getElementById('infoModule').textContent = data.module || 'N/A';
+                                        console.log('收到metadata消息:', data);
+                                    } else if (data.type === 'chunk') {
+                                        // 流式内容片段
+                                        fullAnswer += data.content;
+                                        answerDiv.textContent = fullAnswer;
+                                        // 自动滚动到底部
+                                        resultContent.scrollTop = resultContent.scrollHeight;
+                                        console.log('收到chunk消息，当前答案长度:', fullAnswer.length);
+                                    } else if (data.type === 'done') {
+                                        // 完成
+                                        metadata.session_id = data.session_id;
+                                        metadata.turn_id = data.turn_id;
+                                        metadata.monitor = data.monitor;
+                                        console.log('收到done消息:', data);
+                                        
+                                        // 显示监控统计
+                                        if (data.monitor) {
+                                            const monitorContent = `[LLM Monitor(完整请求)] 总Token数: ${data.monitor.total_tokens || 0} (输入: ${data.monitor.total_prompt_tokens || 0}, 输出: ${data.monitor.total_completion_tokens || 0})  总耗时: ${Math.round(data.monitor.total_latency_ms || 0)} ms  调用次数: ${data.monitor.call_count || 0}`;
+                                            document.getElementById('infoMonitorContent').textContent = monitorContent;
+                                            document.getElementById('infoMonitor').style.display = 'block';
+                                        }
+                                        
+                                        resultInfo.style.display = 'grid';
+                                        document.getElementById('loading').classList.remove('show');
+                                        document.getElementById('submitBtn').disabled = false;
+                                    } else if (data.type === 'error') {
+                                        // 错误
+                                        console.error('收到error消息:', data);
+                                        answerDiv.textContent = '错误: ' + data.message;
+                                        document.getElementById('error').textContent = '错误: ' + data.message;
+                                        document.getElementById('error').classList.add('show');
+                                        document.getElementById('loading').classList.remove('show');
+                                        document.getElementById('submitBtn').disabled = false;
+                                        return;
+                                    }
+                                } catch (e) {
+                                    console.error('解析SSE数据失败:', e, '原始行:', line);
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // 处理剩余的buffer
+                if (buffer.trim()) {
+                    console.log('处理剩余buffer:', buffer);
+                    const lines = buffer.split('\n');
+                    for (const line of lines) {
+                        if (line.startsWith('data: ')) {
+                            try {
+                                const data = JSON.parse(line.slice(6));
+                                if (data.type === 'chunk') {
+                                    fullAnswer += data.content;
+                                    answerDiv.textContent = fullAnswer;
+                                } else if (data.type === 'done') {
+                                    // 完成
+                                    metadata.session_id = data.session_id;
+                                    metadata.turn_id = data.turn_id;
+                                    metadata.monitor = data.monitor;
+                                    
+                                    if (data.monitor) {
+                                        const monitorContent = `[LLM Monitor(完整请求)] 总Token数: ${data.monitor.total_tokens || 0} (输入: ${data.monitor.total_prompt_tokens || 0}, 输出: ${data.monitor.total_completion_tokens || 0})  总耗时: ${Math.round(data.monitor.total_latency_ms || 0)} ms  调用次数: ${data.monitor.call_count || 0}`;
+                                        document.getElementById('infoMonitorContent').textContent = monitorContent;
+                                        document.getElementById('infoMonitor').style.display = 'block';
+                                    }
+                                    
+                                    resultInfo.style.display = 'grid';
+                                    document.getElementById('loading').classList.remove('show');
+                                    document.getElementById('submitBtn').disabled = false;
+                                }
+                            } catch (e) {
+                                console.error('解析最后数据失败:', e);
+                            }
+                        }
+                    }
+                }
+                
+                // 如果最终没有收到done消息，显示错误
+                if (!metadata.session_id) {
+                    console.error('未收到完成消息，可能流式响应中断');
+                    if (fullAnswer) {
+                        answerDiv.textContent = fullAnswer;
+                    } else {
+                        answerDiv.textContent = '响应中断，请重试';
+                    }
+                    document.getElementById('loading').classList.remove('show');
+                    document.getElementById('submitBtn').disabled = false;
+                } else {
+                    // 显示结果信息（只有在收到done消息后才显示）
+                    resultInfo.style.display = 'grid';
+                    document.getElementById('loading').classList.remove('show');
+                    document.getElementById('submitBtn').disabled = false;
                     
                     // 滚动到顶部
                     resultContent.scrollTop = 0;
-                } else {
-                    // 显示错误
-                    resultContent.innerHTML = `
-                        <div class="error show">
-                            查询失败: ${escapeHtml(data.error || '未知错误')}
-                        </div>
-                    `;
-                    document.getElementById('error').textContent = '查询失败: ' + (data.error || '未知错误');
-                    document.getElementById('error').classList.add('show');
                 }
+                
+                // 如果最终没有收到done消息，显示错误
+                if (!metadata.session_id) {
+                    console.error('未收到完成消息，可能流式响应中断');
+                    answerDiv.textContent = fullAnswer || '响应中断，请重试';
+                    document.getElementById('loading').classList.remove('show');
+                    document.getElementById('submitBtn').disabled = false;
+                }
+
+                // 显示结果信息
+                resultInfo.style.display = 'grid';
+                document.getElementById('loading').classList.remove('show');
+                document.getElementById('submitBtn').disabled = false;
+                
+                // 滚动到顶部
+                resultContent.scrollTop = 0;
             } catch (error) {
                 document.getElementById('loading').classList.remove('show');
                 document.getElementById('submitBtn').disabled = false;

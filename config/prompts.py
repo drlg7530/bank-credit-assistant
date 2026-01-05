@@ -212,6 +212,7 @@ INTENT_CLASSIFICATION_PROMPT = """你是银行信贷智能系统中的【问题�
 2. 如果只有一个清晰问题，不要拆分，保持原问题
 3. 只有在用户明确提出多个不同目标时，才拆分为多个子问题
 4. 为每个问题判断其意图类型，并选择对应的系统能力
+5. 同时抽取关键实体信息（业务对象、操作阶段）
 
 意图类型：
 - policy_query：政策、监管、制度、合规、条款
@@ -225,11 +226,17 @@ INTENT_CLASSIFICATION_PROMPT = """你是银行信贷智能系统中的【问题�
 - prediction（预测模块）
 - general（通用回复）
 
+业务对象（business_object）：
+从问题中识别具体的业务对象，如：押品、客户、授信、贷款、合同等。如果问题中没有明确对象，则为空字符串。
+
+操作阶段（operation_stage）：
+从问题中识别操作阶段，如：创建、入库、审批、放款、结清等。如果问题中没有明确阶段，则为空字符串。
+
 输出要求：
 - 使用 JSON 数组
 - 确保 sub_question 内容与原问题尽量一致，不随意改写或删减
 - 不要为了拆分而拆分
-- 每个元素必须包含：sub_question、intent、module
+- 每个元素必须包含：sub_question、intent、module、business_object、operation_stage
 - 不要输出分析过程或解释性文本
 
 示例 1（单一问题，不拆分）：
@@ -241,7 +248,9 @@ INTENT_CLASSIFICATION_PROMPT = """你是银行信贷智能系统中的【问题�
   {{
     "sub_question": "如何在系统中查询客户授信额度？",
     "intent": "system_query",
-    "module": "rag_system"
+    "module": "rag_system",
+    "business_object": "授信",
+    "operation_stage": ""
   }}
 ]
 
@@ -254,12 +263,16 @@ INTENT_CLASSIFICATION_PROMPT = """你是银行信贷智能系统中的【问题�
   {{
     "sub_question": "该客户的贷款风险如何？",
     "intent": "customer_analysis",
-    "module": "prediction"
+    "module": "prediction",
+    "business_object": "客户",
+    "operation_stage": ""
   }},
   {{
     "sub_question": "当前政策是否支持该类贷款？",
     "intent": "policy_query",
-    "module": "rag_policy"
+    "module": "rag_policy",
+    "business_object": "贷款",
+    "operation_stage": ""
   }}
 ]
 
@@ -272,12 +285,31 @@ INTENT_CLASSIFICATION_PROMPT = """你是银行信贷智能系统中的【问题�
   {{
     "sub_question": "如何在系统中调整客户授信额度？",
     "intent": "system_query",
-    "module": "rag_system"
+    "module": "rag_system",
+    "business_object": "授信",
+    "operation_stage": ""
   }},
   {{
     "sub_question": "调整授信额度的操作是否符合相关政策要求？",
     "intent": "policy_query",
-    "module": "rag_policy"
+    "module": "rag_policy",
+    "business_object": "授信",
+    "operation_stage": ""
+  }}
+]
+
+示例 4（包含操作阶段）：
+用户问题：
+查询押品怎么创建
+
+输出：
+[
+  {{
+    "sub_question": "查询押品怎么创建",
+    "intent": "system_query",
+    "module": "rag_system",
+    "business_object": "押品",
+    "operation_stage": "创建"
   }}
 ]
 

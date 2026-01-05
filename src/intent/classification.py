@@ -77,6 +77,10 @@ class IntentResult:
     confidence: float               # 置信度（0-1）
     reasoning: str                  # 推理过程（CoT输出）
     route_to: str                   # 路由目标（'rag_policy'/'rag_system'/'prediction'/'general'）
+    # 实体信息（用于L2记忆）
+    active_domain: List[str] = None  # 业务域列表（如：['system'], ['policy']等）
+    business_object: str = ""       # 业务对象（如：押品、客户等）
+    operation_stage: str = ""       # 操作阶段（如：创建、入库、审批等）
 
 # ============================================================================
 # 全局变量（模型缓存）
@@ -278,33 +282,38 @@ def call_llm(prompt: str, mode: str = None, module: str = "intent_classification
 # 意图识别核心函数
 # ============================================================================
 
-def parse_intent_from_response(response: str) -> Tuple[IntentType, str]:
+def parse_intent_and_entities_from_response(response: str) -> Tuple[IntentType, str, Dict]:
     """
-    从模型响应中解析意图类型（支持JSON格式和文本格式）
+    从模型响应中解析意图类型和实体信息（支持JSON格式和文本格式）
     
     参数:
         response: 模型响应文本（可能是JSON数组或包含CoT推理过程的文本）
     
     返回:
-        Tuple[IntentType, str]: (意图类型, 推理过程)
+        Tuple[IntentType, str, Dict]: (意图类型, 推理过程, 实体信息字典)
+        实体信息字典包含：active_domain, business_object, operation_stage
     """
+    # 默认实体信息（不再包含active_domain，由规则映射）
+    default_entities = {
+        'business_object': '',
+        'operation_stage': ''
+    }
+    
     # 调试：首先输出原始响应
-    print(f"  🔍 [parse_intent_from_response] 开始解析，响应长度: {len(response) if response else 0}")
+    print(f"  🔍 [parse_intent_and_entities_from_response] 开始解析，响应长度: {len(response) if response else 0}")
     if response:
-        print(f"  🔍 [parse_intent_from_response] 响应内容（前500字符）: {response[:500]}...")
+        print(f"  🔍 [parse_intent_and_entities_from_response] 响应内容（前500字符）: {response[:500]}...")
     else:
-        print(f"  ⚠ [parse_intent_from_response] 响应为空！")
-        return IntentType.GENERAL, ""
+        print(f"  ⚠ [parse_intent_and_entities_from_response] 响应为空！")
+        return IntentType.GENERAL, "", default_entities
     
     # 清理响应文本
     original_response = response
     response = response.strip()
     
     # 方法1：尝试解析JSON格式（根据提示词，应该返回JSON数组）
-    # 改进：使用贪婪匹配，尝试匹配完整的JSON数组
     try:
         # 尝试提取JSON部分（可能包含在代码块或其他文本中）
-        # 使用贪婪匹配，尝试匹配完整的JSON数组
         json_match = re.search(r'\[.*\]', response, re.DOTALL)
         if json_match:
             json_str = json_match.group(0)
@@ -316,43 +325,17 @@ def parse_intent_from_response(response: str) -> Tuple[IntentType, str]:
                 json_str = '\n'.join([line for line in lines if not line.strip().startswith('```')])
             json_str = json_str.strip()
             
-            # 调试：输出匹配到的JSON片段
-            print(f"  🔍 匹配到的JSON片段（前300字符）: {json_str[:300]}...")
-            
-            # 尝试修复不完整的JSON（如果以"sub_question"开头，可能是JSON片段）
-            if json_str.startswith('"sub_question"') or '\n    "sub_question"' in json_str:
-                # 尝试构建完整的JSON数组
-                if '"sub_question"' in json_str and '"intent"' in json_str:
-                    # 尝试提取关键字段并构建JSON
-                    sub_question_match = re.search(r'"sub_question"\s*:\s*"([^"]*)"', json_str)
-                    intent_match = re.search(r'"intent"\s*:\s*"([^"]*)"', json_str)
-                    module_match = re.search(r'"module"\s*:\s*"([^"]*)"', json_str)
-                    
-                    if sub_question_match and intent_match:
-                        # 构建完整的JSON对象
-                        sub_question = sub_question_match.group(1)
-                        intent = intent_match.group(1)
-                        module = module_match.group(1) if module_match else "rag_policy"
-                        
-                        # 构建完整的JSON数组
-                        json_str = f'[{{"sub_question": "{sub_question}", "intent": "{intent}", "module": "{module}"}}]'
-                        print(f"  ℹ 检测到不完整的JSON，已尝试修复: {json_str[:200]}...")
-            
             # 尝试解析JSON
             try:
                 parsed_data = json.loads(json_str)
                 print(f"  ✓ JSON解析成功")
             except json.JSONDecodeError as json_err:
-                # JSON解析失败，输出详细错误信息
-                print(f"  ⚠ JSON解析失败: {type(json_err).__name__}: {json_err}")
-                print(f"  ⚠ 错误消息: {str(json_err)}")
-                print(f"  ⚠ 错误位置: line {getattr(json_err, 'lineno', 'N/A')}, column {getattr(json_err, 'colno', 'N/A')}")
-                print(f"  ⚠ 尝试解析的JSON（完整）: {json_str}")
-                raise  # 重新抛出异常，让外层捕获
+                print(f"  ⚠ JSON解析失败: {json_err}")
+                raise
             
             # 确保是数组格式
             if isinstance(parsed_data, list) and len(parsed_data) > 0:
-                # 获取第一个元素的intent字段
+                # 获取第一个元素的完整信息
                 first_item = parsed_data[0]
                 if isinstance(first_item, dict) and 'intent' in first_item:
                     intent_str = first_item['intent'].lower()
@@ -366,28 +349,18 @@ def parse_intent_from_response(response: str) -> Tuple[IntentType, str]:
                     }
                     
                     intent_type = intent_mapping.get(intent_str, IntentType.GENERAL)
-                    return intent_type, original_response
+                    
+                    # 提取实体信息（不再提取active_domain，由规则映射）
+                    entities = {
+                        'business_object': first_item.get('business_object', ''),
+                        'operation_stage': first_item.get('operation_stage', '')
+                    }
+                    
+                    return intent_type, original_response, entities
                 else:
-                    print(f"  ⚠ JSON格式错误：第一个元素不是字典或缺少'intent'字段，内容: {first_item}")
-    except json.JSONDecodeError as e:
-        # JSON解析失败，记录详细错误信息
-        print(f"  ⚠ JSON解析失败（方法1）: {type(e).__name__}: {e}")
-        print(f"  ⚠ 错误消息: {str(e)}")
-        print(f"  ⚠ 错误位置: line {getattr(e, 'lineno', 'N/A')}, column {getattr(e, 'colno', 'N/A')}")
-        if json_match:
-            print(f"  ⚠ 尝试解析的JSON片段（前500字符）: {json_match.group(0)[:500]}...")
-    except (KeyError, AttributeError, TypeError) as e:
-        # 访问字典键失败
-        print(f"  ⚠ JSON结构错误（方法1）: {type(e).__name__}: {e}，尝试其他解析方法")
-        import traceback
-        print(f"  ⚠ 错误堆栈:")
-        traceback.print_exc()
+                    print(f"  ⚠ JSON格式错误：第一个元素不是字典或缺少'intent'字段")
     except Exception as e:
-        # 其他异常
-        print(f"  ⚠ JSON解析异常（方法1）: {type(e).__name__}: {e}，尝试其他解析方法")
-        import traceback
-        print(f"  ⚠ 错误堆栈:")
-        traceback.print_exc()
+        print(f"  ⚠ JSON解析失败（方法1）: {e}，尝试其他解析方法")
     
     # 方法2：尝试直接解析整个响应为JSON
     try:
@@ -403,21 +376,18 @@ def parse_intent_from_response(response: str) -> Tuple[IntentType, str]:
                     'general': IntentType.GENERAL
                 }
                 intent_type = intent_mapping.get(intent_str, IntentType.GENERAL)
-                return intent_type, original_response
-            else:
-                print(f"  ⚠ JSON格式错误（方法2）：第一个元素不是字典或缺少'intent'字段，内容: {first_item}")
-    except json.JSONDecodeError as e:
-        # JSON解析失败，记录详细错误信息
-        print(f"  ⚠ JSON解析失败（方法2）: {e}")
-        print(f"    响应内容（前200字符）: {response[:200]}...")
-    except (KeyError, AttributeError, TypeError) as e:
-        # 访问字典键失败
-        print(f"  ⚠ JSON结构错误（方法2）: {e}，尝试其他解析方法")
+                
+                # 提取实体信息（不再提取active_domain，由规则映射）
+                entities = {
+                    'business_object': first_item.get('business_object', ''),
+                    'operation_stage': first_item.get('operation_stage', '')
+                }
+                
+                return intent_type, original_response, entities
     except Exception as e:
-        # 其他异常
-        print(f"  ⚠ JSON解析异常（方法2）: {e}，尝试其他解析方法")
+        print(f"  ⚠ JSON解析失败（方法2）: {e}")
     
-    # 方法3：使用正则表达式匹配（降级方案）
+    # 方法3：使用正则表达式匹配（降级方案，只解析意图，实体信息使用默认值）
     intent_patterns = {
         IntentType.POLICY_QUERY: [
             r'policy_query',
@@ -451,20 +421,28 @@ def parse_intent_from_response(response: str) -> Tuple[IntentType, str]:
     for intent_type, patterns in intent_patterns.items():
         for pattern in patterns:
             if re.search(pattern, response, re.IGNORECASE):
-                return intent_type, response
+                return intent_type, response, default_entities
     
-    # 方法4：如果没找到，尝试从最后一行提取
-    lines = response.split('\n')
-    last_line = lines[-1].strip() if lines else ""
+    # 方法4：默认返回general
+    return IntentType.GENERAL, response, default_entities
+
+
+def parse_intent_from_response(response: str) -> Tuple[IntentType, str]:
+    """
+    从模型响应中解析意图类型（支持JSON格式和文本格式）
+    兼容旧版本，调用新函数并只返回意图和推理过程
     
-    # 检查最后一行是否包含意图类型
-    for intent_type, patterns in intent_patterns.items():
-        for pattern in patterns:
-            if re.search(pattern, last_line, re.IGNORECASE):
-                return intent_type, response
+    参数:
+        response: 模型响应文本（可能是JSON数组或包含CoT推理过程的文本）
     
-    # 方法5：默认返回general
-    return IntentType.GENERAL, response
+    返回:
+        Tuple[IntentType, str]: (意图类型, 推理过程)
+    
+    注意：此方法已废弃，现在使用 parse_intent_and_entities_from_response
+    保留此方法仅用于向后兼容
+    """
+    intent, reasoning, _ = parse_intent_and_entities_from_response(response)
+    return intent, reasoning
 
 
 @llm_monitor(module="intent_classification")
@@ -504,10 +482,11 @@ def classify_intent(question: str, use_cot: bool = True) -> IntentResult:
             print(f"  ⚠ LLM返回的响应为空！")
             raise ValueError("LLM返回的响应为空")
         
-        # 解析意图类型
-        print(f"  🔍 开始解析意图类型...")
-        intent, reasoning = parse_intent_from_response(response)
+        # 解析意图类型和实体信息
+        print(f"  🔍 开始解析意图类型和实体信息...")
+        intent, reasoning, entities = parse_intent_and_entities_from_response(response)
         print(f"  ✓ 意图解析完成，意图类型: {intent.value}")
+        print(f"  ✓ 实体信息: {entities}")
         
         # 计算置信度（简化版：基于响应中是否明确包含意图类型）
         confidence = 0.8 if intent != IntentType.GENERAL else 0.5
@@ -521,11 +500,24 @@ def classify_intent(question: str, use_cot: bool = True) -> IntentResult:
         }
         route_to = route_mapping.get(intent, 'general')
         
+        # 根据intent类型直接映射active_domain（规则映射，不需要LLM抽取）
+        # 这样可以提高准确性和一致性，减少LLM工作量
+        domain_mapping = {
+            IntentType.POLICY_QUERY: ['policy'],
+            IntentType.SYSTEM_QUERY: ['system'],
+            IntentType.CUSTOMER_ANALYSIS: ['risk'],
+            IntentType.GENERAL: []
+        }
+        active_domain = domain_mapping.get(intent, [])
+        
         return IntentResult(
             intent=intent,
             confidence=confidence,
             reasoning=reasoning,
-            route_to=route_to
+            route_to=route_to,
+            active_domain=active_domain,  # 使用规则映射，而不是LLM抽取
+            business_object=entities.get('business_object', ''),
+            operation_stage=entities.get('operation_stage', '')
         )
         
     except Exception as e:
@@ -621,11 +613,23 @@ def fallback_intent_classification(question: str) -> IntentResult:
         route_to = 'general'
         confidence = 0.4
     
+    # 根据intent类型直接映射active_domain（规则映射）
+    domain_mapping = {
+        IntentType.POLICY_QUERY: ['policy'],
+        IntentType.SYSTEM_QUERY: ['system'],
+        IntentType.CUSTOMER_ANALYSIS: ['risk'],
+        IntentType.GENERAL: []
+    }
+    active_domain = domain_mapping.get(intent, [])
+    
     return IntentResult(
         intent=intent,
         confidence=confidence,
         reasoning=f"降级处理：基于关键词匹配（政策:{policy_score}, 系统:{system_score}, 客户:{customer_score}）",
-        route_to=route_to
+        route_to=route_to,
+        active_domain=active_domain,  # 使用规则映射
+        business_object='',  # 降级处理时无法抽取业务对象
+        operation_stage=''   # 降级处理时无法抽取操作阶段
     )
 
 # ============================================================================

@@ -47,6 +47,12 @@ INDEX_CONFIG = {
     'system': {
         'index_name': 'bank_credit_system',   # 系统功能类索引名称
         'vector_dimension': 1024,             # Qwen3-Embedding向量维度
+    },
+    'l1_memory': {
+        'index_name': 'bank_credit_l1_memory',  # L1会话级记忆索引名称
+    },
+    'l2_memory': {
+        'index_name': 'bank_credit_l2_memory',  # L2业务状态记忆索引名称
     }
 }
 

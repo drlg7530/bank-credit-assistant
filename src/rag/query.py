@@ -12,7 +12,7 @@ import os
 import sys
 import numpy as np
 from pathlib import Path
-from typing import List, Dict, Optional, Tuple
+from typing import List, Dict, Optional, Tuple, Generator
 from dataclasses import dataclass
 
 # 添加项目根目录到路径（从src/rag/到项目根目录需要两级）
@@ -353,7 +353,118 @@ def call_bailian_api(prompt: str, module: str = "rag_query") -> str:
     raise Exception(error_msg)
 
 
-def call_llm(prompt: str, mode: str = None, module: str = "rag_query") -> str:
+def call_bailian_api_stream(prompt: str, module: str = "rag_query") -> Generator[str, None, None]:
+    """
+    调用百炼API（流式输出）
+    
+    参数:
+        prompt: 提示词
+        module: 模块名称（已废弃，保留以兼容旧代码）
+    
+    返回:
+        Generator[str, None, None]: 生成器，逐步返回模型生成的文本片段
+    """
+    if not DASHSCOPE_AVAILABLE:
+        raise Exception("dashscope未安装")
+    
+    if not DASHSCOPE_API_KEY:
+        raise ValueError("百炼API密钥未设置，请设置 DASHSCOPE_API_KEY 环境变量")
+    
+    dashscope.api_key = DASHSCOPE_API_KEY
+    
+    # 使用流式调用
+    responses = Generation.call(
+        model=BAILIAN_MODEL,
+        prompt=prompt,
+        temperature=0.7,
+        max_tokens=1000,
+        result_format='message',
+        stream=True  # 启用流式输出
+    )
+    
+    full_content = ""
+    prompt_tokens = 0
+    completion_tokens = 0
+    
+    try:
+        chunk_count = 0
+        previous_content = ""  # 用于计算增量内容
+        
+        for response in responses:
+            if response.status_code == 200:
+                # 提取内容
+                # 百炼API流式响应格式：
+                # - delta.content: 增量内容（推荐使用）
+                # - message.content: 累积的完整内容（需要计算增量）
+                if 'output' in response:
+                    output = response['output']
+                    if 'choices' in output and len(output['choices']) > 0:
+                        choice = output['choices'][0]
+                        delta = choice.get('delta', {})
+                        message = choice.get('message', {})
+                        
+                        # 优先从delta获取增量内容
+                        chunk_text = None
+                        if 'content' in delta:
+                            # delta.content 是增量内容，直接使用
+                            chunk_text = delta['content']
+                        elif 'content' in message:
+                            # message.content 是累积内容，需要计算增量
+                            current_content = message['content']
+                            if current_content.startswith(previous_content):
+                                # 计算增量部分
+                                chunk_text = current_content[len(previous_content):]
+                                previous_content = current_content
+                            else:
+                                # 如果内容不连续，可能是新的响应，直接使用
+                                chunk_text = current_content
+                                previous_content = current_content
+                        
+                        if chunk_text:
+                            full_content += chunk_text
+                            chunk_count += 1
+                            if chunk_count <= 3:  # 只打印前3个chunk的日志
+                                print(f"[call_bailian_api_stream] 收到chunk #{chunk_count} (长度: {len(chunk_text)}): {chunk_text[:50]}...")
+                            yield chunk_text
+                        else:
+                            # 检查是否有finish_reason（表示流式结束）
+                            finish_reason = choice.get('finish_reason')
+                            if finish_reason:
+                                print(f"[call_bailian_api_stream] 流式结束，finish_reason: {finish_reason}")
+                else:
+                    # 检查响应结构
+                    if chunk_count == 0:
+                        print(f"[call_bailian_api_stream] 响应中没有output字段，响应结构: {list(response.keys())}")
+                
+                # 提取token信息（从最后一个响应中）
+                try:
+                    token_info = extract_token_info_from_response(response, BAILIAN_MODEL)
+                    prompt_tokens = token_info.get('prompt_tokens', 0)
+                    completion_tokens = token_info.get('completion_tokens', 0)
+                except Exception:
+                    pass
+            else:
+                error_msg = f"百炼API流式调用失败: {response.status_code}"
+                if hasattr(response, 'message'):
+                    error_msg += f" - {response.message}"
+                print(f"[call_bailian_api_stream] API错误: {error_msg}")
+                raise Exception(error_msg)
+        
+        print(f"[call_bailian_api_stream] 流式调用完成，总共收到 {chunk_count} 个chunk，完整内容长度: {len(full_content)}")
+        
+        # 设置token信息到线程本地存储（供监控装饰器使用）
+        set_token_info(prompt_tokens, completion_tokens)
+        
+    except Exception as e:
+        # 如果流式调用失败，抛出异常
+        error_msg = f"百炼API流式调用异常: {e}"
+        print(f"[call_bailian_api_stream] 异常: {error_msg}")
+        import traceback
+        traceback.print_exc()
+        raise Exception(error_msg)
+
+
+def call_llm(prompt: str, mode: str = None, module: str = "rag_query", stream: bool = False) -> str:
     """
     调用大模型（统一接口，带监控）
     
@@ -361,17 +472,57 @@ def call_llm(prompt: str, mode: str = None, module: str = "rag_query") -> str:
         prompt: 提示词
         mode: 调用模式（'bailian' 或 'local'），如果为None，使用全局配置
         module: 模块名称（用于监控）
+        stream: 是否使用流式输出（默认False）
     
     返回:
-        str: 模型生成的文本
+        str: 模型生成的文本（如果stream=True，返回完整文本）
+    """
+    if mode is None:
+        mode = LLM_MODE
+    
+    if stream:
+        # 流式输出（目前只支持百炼API）
+        if mode == 'local':
+            # 本地模型暂不支持流式输出，降级为普通调用
+            return call_local_llm(prompt, module=module)
+        else:
+            # 百炼API流式输出，收集所有片段后返回完整文本
+            full_text = ""
+            for chunk in call_bailian_api_stream(prompt, module=module):
+                full_text += chunk
+            return full_text
+    else:
+        # 普通输出
+        if mode == 'local':
+            return call_local_llm(prompt, module=module)
+        else:
+            return call_bailian_api(prompt, module=module)
+
+
+def call_llm_stream(prompt: str, mode: str = None, module: str = "rag_query") -> Generator[str, None, None]:
+    """
+    调用大模型（流式输出，返回生成器）
+    
+    参数:
+        prompt: 提示词
+        mode: 调用模式（'bailian' 或 'local'），如果为None，使用全局配置
+        module: 模块名称（用于监控）
+    
+    返回:
+        Generator[str, None, None]: 生成器，逐步返回模型生成的文本片段
     """
     if mode is None:
         mode = LLM_MODE
     
     if mode == 'local':
-        return call_local_llm(prompt, module=module)
+        # 本地模型暂不支持流式输出，降级为普通调用后逐字符返回
+        full_text = call_local_llm(prompt, module=module)
+        # 模拟流式输出（逐字符返回）
+        for char in full_text:
+            yield char
     else:
-        return call_bailian_api(prompt, module=module)
+        # 百炼API流式输出
+        yield from call_bailian_api_stream(prompt, module=module)
 
 # ============================================================================
 # Elasticsearch向量搜索
@@ -448,9 +599,9 @@ def search_vectors(
         }
     
     # 调试：输出查询信息
-    print(f"  🔍 索引名称: {index_name}")
-    print(f"  🔍 过滤条件: {must_filters}")
-    print(f"  🔍 查询top_k: {top_k}")
+    # print(f"  🔍 索引名称: {index_name}")
+    # print(f"  🔍 过滤条件: {must_filters}")
+    # print(f"  🔍 查询top_k: {top_k}")
     
     # 执行搜索
     try:
@@ -586,7 +737,8 @@ def rerank_results(
 def generate_answer(
     query: str,
     search_results: List[SearchResult],
-    domain: str = 'general'
+    domain: str = 'general',
+    stream: bool = False
 ) -> str:
     """
     使用大模型基于检索结果生成最终答案
@@ -595,9 +747,10 @@ def generate_answer(
         query: 用户查询
         search_results: 搜索结果列表
         domain: 域类型（'policy'/'system'/'general'）
+        stream: 是否使用流式输出（默认False）
     
     返回:
-        str: 生成的答案
+        str: 生成的答案（如果stream=True，返回完整文本）
     """
     if not search_results:
         return "抱歉，未找到相关信息。请尝试使用其他关键词查询。"
@@ -632,10 +785,76 @@ def generate_answer(
     
     # 调用大模型生成答案
     try:
-        answer = call_llm(prompt, module="rag_answer")
+        answer = call_llm(prompt, module="rag_answer", stream=stream)
         return answer.strip()
     except Exception as e:
         return f"生成答案时出错: {e}"
+
+
+def generate_answer_stream(
+    query: str,
+    search_results: List[SearchResult],
+    domain: str = 'general'
+) -> Generator[str, None, None]:
+    """
+    使用大模型基于检索结果生成最终答案（流式输出）
+    
+    参数:
+        query: 用户查询
+        search_results: 搜索结果列表
+        domain: 域类型（'policy'/'system'/'general'）
+    
+    返回:
+        Generator[str, None, None]: 生成器，逐步返回答案文本片段
+    """
+    if not search_results:
+        yield "抱歉，未找到相关信息。请尝试使用其他关键词查询。"
+        return
+    
+    # 构建上下文（合并检索到的文档内容）
+    context_parts = []
+    for i, result in enumerate(search_results, 1):
+        # 添加元数据信息
+        metadata_info = []
+        if result.metadata.get('source'):
+            metadata_info.append(f"来源：{result.metadata['source']}")
+        if result.metadata.get('publish_date'):
+            metadata_info.append(f"发布时间：{result.metadata['publish_date']}")
+        if result.metadata.get('region'):
+            metadata_info.append(f"地区：{result.metadata['region']}")
+        
+        metadata_str = " | ".join(metadata_info) if metadata_info else ""
+        
+        context_part = f"[文档{i}]"
+        if metadata_str:
+            context_part += f" ({metadata_str})"
+        context_part += f"\n{result.content}\n"
+        context_parts.append(context_part)
+    
+    context = "\n".join(context_parts)
+    
+    # 获取提示词模板
+    prompt_template = get_rag_query_prompt(domain)
+    
+    # 填充提示词（包含日期信息）
+    prompt = prompt_template.format(context=context, question=query, today=TODAY)
+    
+    # 调用大模型生成答案（流式输出）
+    try:
+        print(f"[generate_answer_stream] 开始调用流式LLM，prompt长度: {len(prompt)}")
+        chunk_count = 0
+        for chunk in call_llm_stream(prompt, module="rag_answer"):
+            chunk_count += 1
+            if chunk_count <= 3:  # 只打印前3个chunk的日志
+                print(f"[generate_answer_stream] 收到chunk #{chunk_count}: {chunk[:50]}...")
+            yield chunk
+        print(f"[generate_answer_stream] 流式生成完成，总共收到 {chunk_count} 个chunk")
+        if chunk_count == 0:
+            print(f"[generate_answer_stream] ⚠️ 警告：没有收到任何chunk")
+    except Exception as e:
+        error_msg = f"生成答案时出错: {e}"
+        print(f"[generate_answer_stream] 异常: {error_msg}")
+        yield error_msg
 
 # ============================================================================
 # RAG查询主函数
@@ -751,10 +970,13 @@ def rag_query(
     
     # 步骤5：大模型生成最终答案
     print(f"\n[步骤5] 大模型生成答案...")
+    # 检查是否启用流式输出（仅对最后一次LLM总结结果调用使用流式）
+    enable_streaming = RAG_CONFIG.get('enable_streaming', True)
     answer = generate_answer(
         query=query,  # 使用原始查询，不是改写后的
         search_results=filtered_results,
-        domain=domain
+        domain=domain,
+        stream=enable_streaming
     )
     print(f"  ✓ 答案生成完成")
     
