@@ -438,6 +438,50 @@ def api_query_stream():
         return jsonify({'success': False, 'error': str(e)}), 500
 
 
+@app.route('/api/conversation-history', methods=['GET'])
+def api_conversation_history():
+    """
+    获取对话历史记录
+    
+    查询参数:
+        session_id: session ID（必需）
+        limit: 返回的最大轮次数（可选，默认50）
+    
+    返回:
+        JSON格式的对话历史记录列表
+    """
+    try:
+        session_id = request.args.get('session_id', None)
+        if not session_id:
+            return jsonify({
+                'success': False,
+                'error': 'session_id参数不能为空'
+            }), 400
+        
+        limit = int(request.args.get('limit', 50))
+        
+        # 获取记忆管理器
+        from src.context.memory_manager import get_memory_manager
+        memory_manager = get_memory_manager()
+        
+        # 获取历史记录
+        history = memory_manager.get_conversation_history(session_id=session_id, limit=limit)
+        
+        return jsonify({
+            'success': True,
+            'session_id': session_id,
+            'history': history,
+            'count': len(history)
+        })
+    except Exception as e:
+        print(f"  ❌ 获取对话历史失败: {e}")
+        traceback.print_exc()
+        return jsonify({
+            'success': False,
+            'error': f'获取对话历史失败: {str(e)}'
+        }), 500
+
+
 @app.route('/api/quick-questions', methods=['GET'])
 def api_quick_questions():
     """

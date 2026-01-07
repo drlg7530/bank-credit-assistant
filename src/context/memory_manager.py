@@ -108,6 +108,19 @@ class MemoryManager:
             entities=entities,
             previous_l2=previous_l2
         )
+    
+    def get_conversation_history(self, session_id: str, limit: int = 50) -> list:
+        """
+        获取会话历史记录
+        
+        参数:
+            session_id: session ID
+            limit: 返回的最大记录数（默认50，每轮对话有2条记录：user和assistant）
+        
+        返回:
+            list: 会话历史记录列表，按turn_id和时间戳排序
+        """
+        return self.l1_memory.get_conversation_history(session_id=session_id, limit=limit)
 
 
 # ============================================================================

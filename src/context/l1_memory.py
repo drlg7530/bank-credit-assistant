@@ -267,16 +267,21 @@ class L1Memory:
             print(f"  ⚠ L1记忆：保存助手answer失败: {e}")
             return None
     
-    def get_conversation_history(self, session_id: str, limit: int = 10) -> List[Dict]:
+    def get_conversation_history(self, session_id: str, limit: int = 50) -> List[Dict]:
         """
-        获取会话历史（可选功能，暂不实现详细逻辑）
+        获取会话历史记录
         
         参数:
             session_id: session ID
-            limit: 返回的最大记录数
+            limit: 返回的最大轮次数（每轮对话有user和assistant两条记录）
         
         返回:
             List[Dict]: 会话历史记录列表，按turn_id和时间戳排序
+            格式: [
+                {"session_id": "...", "turn_id": 1, "role": "user", "content": "...", "timestamp": "..."},
+                {"session_id": "...", "turn_id": 1, "role": "assistant", "content": "...", "timestamp": "..."},
+                ...
+            ]
         """
         if not self.es_client:
             return []
@@ -299,7 +304,14 @@ class L1Memory:
             # 提取文档内容
             history = []
             for hit in hits:
-                history.append(hit.get('_source', {}))
+                source = hit.get('_source', {})
+                history.append({
+                    'session_id': source.get('session_id'),
+                    'turn_id': source.get('turn_id'),
+                    'role': source.get('role'),
+                    'content': source.get('content'),
+                    'timestamp': source.get('timestamp')
+                })
             
             return history
         except Exception as e:
