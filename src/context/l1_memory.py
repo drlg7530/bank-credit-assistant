@@ -15,6 +15,9 @@ sys.path.insert(0, str(project_root))
 # 导入ES配置
 from config.elasticsearch import ES_CONFIG, INDEX_CONFIG
 
+# 导入Session记录管理
+from src.context.session_record import SessionRecord
+
 # ============================================================================
 # 依赖检查
 # ============================================================================
@@ -61,6 +64,9 @@ class L1Memory:
         # 确保索引存在
         if self.es_client:
             self._ensure_index_exists()
+        
+        # 初始化Session记录管理器（延迟初始化，避免循环依赖）
+        self._session_record = None
     
     def _ensure_index_exists(self):
         """
@@ -180,14 +186,20 @@ class L1Memory:
             print(f"  ⚠ L1记忆：获取当前turn_id失败: {e}，使用默认值1")
             return 1
     
-    def save_user_query(self, session_id: str, turn_id: Optional[int] = None, content: str = "") -> Optional[int]:
+    def save_user_query(self, session_id: str, turn_id: Optional[int] = None, content: str = "", user_id: int = 10000) -> Optional[int]:
         """
         保存用户query到L1
         
+        核心逻辑：
+        - 同一session下的多轮对话，使用同一个session_id，turn_id递增（1, 2, 3...）
+        - 只有第一个问题（turn_id=1）时，创建session记录（标题使用第一个问题）
+        - 后续问题继续使用同一个session_id，只是turn_id递增
+        
         参数:
-            session_id: session ID
-            turn_id: 对话轮次编号，如果为None则自动获取下一个
+            session_id: session ID（同一session下的所有对话使用相同的session_id）
+            turn_id: 对话轮次编号，如果为None则自动获取下一个（基于该session的最大turn_id+1）
             content: 用户原始输入
+            user_id: 用户ID，用于创建session记录（默认10000）
         
         返回:
             Optional[int]: 保存成功返回turn_id，失败返回None
@@ -201,9 +213,27 @@ class L1Memory:
             return None
         
         try:
-            # 如果没有提供turn_id，自动获取下一个
+            # 如果没有提供turn_id，自动获取下一个（查询该session的最大turn_id，然后+1）
             if turn_id is None:
                 turn_id = self._get_next_turn_id(session_id)
+            
+            # 如果是第一个问题（turn_id为1），创建session记录
+            # 注意：只有新session的第一个问题才会创建session记录
+            # 同一session下的后续问题（turn_id>1）不会创建新session记录
+            if turn_id == 1:
+                # 延迟初始化Session记录管理器
+                if self._session_record is None:
+                    self._session_record = SessionRecord(es_client=self.es_client)
+                
+                # 检查session记录是否已存在，如果不存在则创建
+                # 这样可以避免重复创建（如果session记录已存在，说明这不是新session）
+                existing_record = self._session_record.get_session_record(session_id)
+                if not existing_record:
+                    self._session_record.create_session_record(
+                        session_id=session_id,
+                        user_id=user_id,
+                        first_question=content  # 使用第一个问题作为session标题
+                    )
             
             # 构建文档
             doc = {
@@ -292,8 +322,8 @@ class L1Memory:
                     "term": {"session_id": session_id}
                 },
                 "sort": [
-                    {"turn_id": {"order": "asc"}},
-                    {"timestamp": {"order": "asc"}}
+                    {"turn_id": {"order": "asc"}},      # 先按turn_id排序（从小到大）
+                    {"timestamp": {"order": "asc"}}     # 再按时间戳排序（从小到大），确保同一turn_id内user在assistant之前
                 ],
                 "size": limit * 2  # 每轮对话有user和assistant两条记录
             }

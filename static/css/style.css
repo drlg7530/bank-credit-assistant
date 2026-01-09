@@ -607,6 +607,82 @@ textarea {
     -webkit-box-orient: vertical;
 }
 
+/* ========== Session列表样式 ========== */
+.session-item {
+    background: white;
+    border: 1px solid #e0e0e0;
+    border-radius: 6px;
+    padding: 10px;
+    margin-bottom: 8px;
+    transition: all 0.3s;
+    font-size: 12px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+}
+
+.session-item:hover {
+    background: #f0f0f0;
+    border-color: #667eea;
+    transform: translateX(2px);
+}
+
+.session-item.active {
+    background: #e3f2fd;
+    border-color: #1976d2;
+    border-width: 2px;
+}
+
+.session-item-content {
+    flex: 1;
+    cursor: pointer;
+    min-width: 0; /* 允许flex子元素收缩 */
+}
+
+.session-item-title {
+    color: #333;
+    font-weight: 500;
+    line-height: 1.4;
+    word-break: break-word;
+    margin-bottom: 4px;
+    max-height: 40px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    line-clamp: 2;
+    -webkit-box-orient: vertical;
+}
+
+.session-item-time {
+    color: #999;
+    font-size: 10px;
+}
+
+.session-item-delete {
+    background: transparent;
+    border: none;
+    cursor: pointer;
+    font-size: 14px;
+    padding: 4px 6px;
+    border-radius: 4px;
+    transition: all 0.3s;
+    opacity: 0.6;
+    flex-shrink: 0; /* 防止按钮被压缩 */
+}
+
+.session-item-delete:hover {
+    opacity: 1;
+    background: rgba(211, 47, 47, 0.1);
+    transform: scale(1.1);
+}
+
+.history-header-buttons {
+    display: flex;
+    gap: 4px;
+}
+
 /* ========== 快捷问题样式 ========== */
 .quick-questions {
     background: #f8f9fa;

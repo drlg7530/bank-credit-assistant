@@ -53,6 +53,9 @@ INDEX_CONFIG = {
     },
     'l2_memory': {
         'index_name': 'bank_credit_l2_memory',  # L2业务状态记忆索引名称
+    },
+    'session_record': {
+        'index_name': 'bank_credit_session_record',  # Session记录索引名称
     }
 }
 

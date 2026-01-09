@@ -119,7 +119,7 @@ def query(
     try:
         # 步骤0：写入L1（原始query）
         print(f"\n[步骤0] 写入L1（原始query）...")
-        turn_id = memory_manager.save_user_query(session_id=session_id, content=question)
+        turn_id = memory_manager.save_user_query(session_id=session_id, content=question, user_id=user_id)
         # 如果保存失败，turn_id为None，使用默认值1
         if turn_id is None:
             turn_id = 1

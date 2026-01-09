@@ -64,6 +64,7 @@ SESSION_KEY_PREFIX = "session"
 # 注意：L2记忆的生命周期同session，session过期时L2也会过期
 L2_MEMORY_TTL = 86400
 
-# Session的过期时间（默认24小时，86400秒）
-SESSION_TTL = 86400
+# Session的过期时间（默认30分钟，1800秒）
+# 如果30分钟内没有操作，session失效，下次对话会创建新session
+SESSION_TTL = 1800
 

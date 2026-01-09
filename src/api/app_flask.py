@@ -268,7 +268,7 @@ def _generate_streaming_response(question, role, enable_rewrite, enable_rerank, 
         # 步骤0：写入L1（原始query）
         memory_manager = get_memory_manager()
         session_id = memory_manager.get_or_create_session(user_id=user_id, session_id=session_id)
-        turn_id = memory_manager.save_user_query(session_id=session_id, content=question)
+        turn_id = memory_manager.save_user_query(session_id=session_id, content=question, user_id=user_id)
         if turn_id is None:
             turn_id = 1
         
@@ -479,6 +479,106 @@ def api_conversation_history():
         return jsonify({
             'success': False,
             'error': f'获取对话历史失败: {str(e)}'
+        }), 500
+
+
+@app.route('/api/session-list', methods=['GET'])
+def api_session_list():
+    """
+    获取用户的所有session列表
+    
+    查询参数:
+        user_id: 用户ID（可选，默认10000）
+        limit: 返回的最大记录数（可选，默认50）
+    
+    返回:
+        JSON格式的session列表，按创建时间倒序
+    """
+    try:
+        user_id = int(request.args.get('user_id', 10000))
+        limit = int(request.args.get('limit', 50))
+        
+        # 获取Session记录管理器
+        from src.context.session_record import SessionRecord
+        from src.context.memory_manager import get_memory_manager
+        
+        # 获取ES客户端（从memory_manager获取）
+        memory_manager = get_memory_manager()
+        es_client = memory_manager.l1_memory.es_client
+        
+        # 创建Session记录管理器
+        session_record = SessionRecord(es_client=es_client)
+        
+        # 获取session列表
+        sessions = session_record.list_session_records(user_id=user_id, limit=limit)
+        
+        return jsonify({
+            'success': True,
+            'user_id': user_id,
+            'sessions': sessions,
+            'count': len(sessions)
+        })
+    except Exception as e:
+        print(f"  ❌ 获取session列表失败: {e}")
+        traceback.print_exc()
+        return jsonify({
+            'success': False,
+            'error': f'获取session列表失败: {str(e)}'
+        }), 500
+
+
+@app.route('/api/session-delete', methods=['POST'])
+def api_session_delete():
+    """
+    删除指定session的所有历史记录
+    
+    请求参数:
+        session_id: session ID（必需）
+    
+    返回:
+        JSON格式的删除结果
+    """
+    try:
+        data = request.get_json()
+        if not data:
+            return jsonify({
+                'success': False,
+                'error': '请求数据为空'
+            }), 400
+        
+        session_id = data.get('session_id', None)
+        if not session_id:
+            return jsonify({
+                'success': False,
+                'error': 'session_id参数不能为空'
+            }), 400
+        
+        # 导入清理模块
+        from src.context.clear_history import clear_session_history
+        
+        # 清理该session的所有历史记录
+        result = clear_session_history(session_id=session_id)
+        
+        if result.get('success'):
+            return jsonify({
+                'success': True,
+                'session_id': session_id,
+                'l1_deleted': result.get('l1_deleted', 0),
+                'session_deleted': result.get('session_deleted', 0),
+                'l2_deleted': result.get('l2_deleted', 0),
+                'message': f'成功删除session {session_id} 的所有历史记录'
+            })
+        else:
+            return jsonify({
+                'success': False,
+                'error': result.get('error', '删除失败')
+            }), 500
+    except Exception as e:
+        print(f"  ❌ 删除session失败: {e}")
+        traceback.print_exc()
+        return jsonify({
+            'success': False,
+            'error': f'删除session失败: {str(e)}'
         }), 500
 
 

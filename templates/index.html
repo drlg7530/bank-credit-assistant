@@ -55,9 +55,14 @@
                 <div class="conversation-history">
                     <div class="history-header">
                         <h3>💬 历史对话</h3>
-                        <button class="btn-refresh" id="refreshHistoryBtn" onclick="loadConversationHistory()" title="刷新历史记录">
-                            🔄
-                        </button>
+                        <div class="history-header-buttons">
+                            <button class="btn-refresh" id="newConversationBtn" onclick="startNewConversation()" title="开始新对话">
+                                ➕
+                            </button>
+                            <button class="btn-refresh" id="refreshHistoryBtn" onclick="loadSessionList()" title="刷新历史记录">
+                                🔄
+                            </button>
+                        </div>
                     </div>
                     <div id="conversationHistory" class="history-list">
                         <div class="empty-history">暂无对话记录</div>

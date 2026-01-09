@@ -12,29 +12,152 @@ let currentSessionId = null;
 // 页面加载时初始化
 window.onload = function() {
     loadQuickQuestions();
-    // 延迟加载历史记录，等待session_id生成
-    setTimeout(() => {
-        if (currentSessionId) {
-            loadConversationHistory();
-        }
-    }, 1000);
+    // 加载session列表
+    loadSessionList();
 };
 
-// ========== 对话历史管理 ==========
+// ========== Session列表管理 ==========
 /**
- * 加载对话历史记录
+ * 开始新对话
  */
-async function loadConversationHistory() {
-    if (!currentSessionId) {
-        document.getElementById('conversationHistory').innerHTML = '<div class="empty-history">暂无对话记录</div>';
-        return;
-    }
+function startNewConversation() {
+    // 清空当前session_id，下次提交查询时会创建新session
+    currentSessionId = null;
+    
+    // 清空对话框
+    const resultContent = document.getElementById('resultContent');
+    resultContent.innerHTML = `
+        <div class="empty-state">
+            <div class="empty-state-icon">💬</div>
+            <div class="empty-state-text">请在下方输入问题开始对话</div>
+        </div>
+    `;
+    
+    // 清空输入框
+    document.getElementById('questionInput').value = '';
+    
+    // 刷新session列表（更新active状态）
+    loadSessionList();
+}
 
+/**
+ * 加载session列表
+ */
+async function loadSessionList() {
     try {
-        const response = await fetch(`/api/conversation-history?session_id=${encodeURIComponent(currentSessionId)}&limit=50`);
+        const response = await fetch(`/api/session-list?user_id=10000&limit=50`);
         const data = await response.json();
         
         const historyContainer = document.getElementById('conversationHistory');
+        
+        if (data.success && data.sessions && data.sessions.length > 0) {
+            // 生成HTML
+            let html = '';
+            
+            data.sessions.forEach(session => {
+                const time = new Date(session.created_at).toLocaleString('zh-CN');
+                const title = escapeHtml(session.title || session.first_question || '无标题');
+                const isActive = session.session_id === currentSessionId ? 'active' : '';
+                
+                html += `
+                    <div class="session-item ${isActive}">
+                        <div class="session-item-content" onclick="switchSession('${session.session_id}')">
+                            <div class="session-item-title">${title}</div>
+                            <div class="session-item-time">${time}</div>
+                        </div>
+                        <button class="session-item-delete" onclick="event.stopPropagation(); deleteSession('${session.session_id}')" title="删除此对话">
+                            🗑️
+                        </button>
+                    </div>
+                `;
+            });
+
+            historyContainer.innerHTML = html;
+        } else {
+            historyContainer.innerHTML = '<div class="empty-history">暂无对话记录</div>';
+        }
+    } catch (error) {
+        console.error('加载session列表失败:', error);
+        document.getElementById('conversationHistory').innerHTML = '<div class="empty-history">加载失败</div>';
+    }
+}
+
+/**
+ * 删除session及其所有历史记录
+ * @param {string} sessionId - session ID
+ */
+async function deleteSession(sessionId) {
+    // 确认删除
+    if (!confirm('确定要删除此对话的所有历史记录吗？此操作不可恢复！')) {
+        return;
+    }
+    
+    try {
+        const response = await fetch('/api/session-delete', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+                session_id: sessionId
+            })
+        });
+        
+        const data = await response.json();
+        
+        if (data.success) {
+            // 如果删除的是当前session，清空currentSessionId和对话框
+            if (sessionId === currentSessionId) {
+                currentSessionId = null;
+                const resultContent = document.getElementById('resultContent');
+                resultContent.innerHTML = `
+                    <div class="empty-state">
+                        <div class="empty-state-icon">💬</div>
+                        <div class="empty-state-text">请在下方输入问题开始对话</div>
+                    </div>
+                `;
+            }
+            
+            // 自动刷新session列表（不显示成功提示）
+            loadSessionList();
+        } else {
+            // 删除失败时显示错误提示
+            alert('删除失败: ' + (data.error || '未知错误'));
+        }
+    } catch (error) {
+        console.error('删除session失败:', error);
+        alert('删除失败: ' + error.message);
+    }
+}
+
+/**
+ * 切换session并加载该session的对话
+ * @param {string} sessionId - session ID
+ */
+async function switchSession(sessionId) {
+    // 切换当前session（重要：确保后续对话使用这个session_id）
+    currentSessionId = sessionId;
+    
+    // 重新加载session列表（更新active状态）
+    loadSessionList();
+    
+    // 加载该session的对话历史到左侧对话框（清空当前显示，加载该session的所有对话）
+    await loadSessionConversation(sessionId);
+}
+
+/**
+ * 加载指定session的对话历史到左侧对话框
+ * @param {string} sessionId - session ID
+ */
+async function loadSessionConversation(sessionId) {
+    try {
+        const response = await fetch(`/api/conversation-history?session_id=${encodeURIComponent(sessionId)}&limit=50`);
+        const data = await response.json();
+        
+        const resultContent = document.getElementById('resultContent');
+        
+        // 清空当前对话
+        resultContent.innerHTML = '';
         
         if (data.success && data.history && data.history.length > 0) {
             // 按turn_id分组，每轮对话包含user和assistant
@@ -51,67 +174,63 @@ async function loadConversationHistory() {
                 }
             });
 
-            // 生成HTML
-            let html = '';
-            const turnIds = Object.keys(groupedHistory).sort((a, b) => parseInt(b) - parseInt(a)); // 倒序显示，最新的在前
+            // 按turn_id排序（从小到大）
+            const turnIds = Object.keys(groupedHistory).sort((a, b) => parseInt(a) - parseInt(b));
             
             turnIds.forEach(turnId => {
                 const turn = groupedHistory[turnId];
+                
+                // 显示用户消息
                 if (turn.user) {
-                    // 用户问题
-                    const time = new Date(turn.user.timestamp).toLocaleString('zh-CN');
-                    const userContent = escapeHtml(turn.user.content);
-                    html += `
-                        <div class="history-item" onclick="reuseHistoryQuery(${JSON.stringify(turn.user.content)})">
-                            <div class="history-item-header">
-                                <span class="history-item-turn">第${turnId}轮</span>
-                                <span class="history-item-time">${time}</span>
-                            </div>
-                            <div>
-                                <span class="history-item-role user">用户</span>
-                                <span class="history-item-content">${userContent}</span>
-                            </div>
+                    const userMessageTime = new Date(turn.user.timestamp).toLocaleTimeString('zh-CN');
+                    const userMessage = document.createElement('div');
+                    userMessage.className = 'message user';
+                    userMessage.innerHTML = `
+                        <div class="message-content">
+                            <div class="message-header">👤 您</div>
+                            <div class="message-text">${escapeHtml(turn.user.content)}</div>
+                            <div class="message-time">${userMessageTime}</div>
                         </div>
                     `;
+                    resultContent.appendChild(userMessage);
                 }
+                
+                // 显示助手消息
                 if (turn.assistant) {
-                    // 助手回答
-                    const time = new Date(turn.assistant.timestamp).toLocaleString('zh-CN');
-                    const content = turn.assistant.content.length > 100 
-                        ? turn.assistant.content.substring(0, 100) + '...' 
-                        : turn.assistant.content;
-                    html += `
-                        <div class="history-item">
-                            <div class="history-item-header">
-                                <span class="history-item-turn">第${turnId}轮</span>
-                                <span class="history-item-time">${time}</span>
-                            </div>
-                            <div>
-                                <span class="history-item-role assistant">助手</span>
-                                <span class="history-item-content">${escapeHtml(content)}</span>
-                            </div>
+                    const assistantMessageTime = new Date(turn.assistant.timestamp).toLocaleTimeString('zh-CN');
+                    const assistantMessage = document.createElement('div');
+                    assistantMessage.className = 'message assistant';
+                    assistantMessage.innerHTML = `
+                        <div class="message-content">
+                            <div class="message-header">🤖 智能助手</div>
+                            <div class="message-text">${escapeHtml(turn.assistant.content)}</div>
+                            <div class="message-time">${assistantMessageTime}</div>
                         </div>
                     `;
+                    resultContent.appendChild(assistantMessage);
                 }
             });
-
-            historyContainer.innerHTML = html;
+            
+            // 滚动到底部
+            resultContent.scrollTop = resultContent.scrollHeight;
         } else {
-            historyContainer.innerHTML = '<div class="empty-history">暂无对话记录</div>';
+            // 如果没有对话记录，显示空状态
+            resultContent.innerHTML = `
+                <div class="empty-state">
+                    <div class="empty-state-icon">💬</div>
+                    <div class="empty-state-text">该对话暂无记录</div>
+                </div>
+            `;
         }
     } catch (error) {
         console.error('加载对话历史失败:', error);
-        document.getElementById('conversationHistory').innerHTML = '<div class="empty-history">加载失败</div>';
+        const resultContent = document.getElementById('resultContent');
+        resultContent.innerHTML = `
+            <div class="error show">
+                加载对话失败: ${escapeHtml(error.message)}
+            </div>
+        `;
     }
-}
-
-/**
- * 重用历史查询
- * @param {string} question - 历史问题
- */
-function reuseHistoryQuery(question) {
-    document.getElementById('questionInput').value = question;
-    submitQuery();
 }
 
 // ========== 快捷问题管理 ==========
@@ -213,18 +332,29 @@ async function submitQuery() {
     try {
         // 使用 /api/query 端点，根据配置决定是否使用流式输出
         // 后端会根据 RAG_CONFIG['enable_streaming'] 配置决定返回流式还是非流式响应
+        
+        // 核心逻辑：
+        // 1. 如果currentSessionId存在，传递session_id，后端会继续使用这个session，只是turn_id递增
+        // 2. 如果currentSessionId为null，不传递session_id，后端会创建新session（turn_id=1）
+        const requestBody = {
+            question: question,
+            role: role,
+            enable_rewrite: enableRewrite,
+            enable_rerank: enableRerank
+        };
+        
+        // 只有在有currentSessionId时才传递，这样后端会继续使用这个session，只是turn_id递增
+        // 如果currentSessionId为null，不传递session_id，后端会创建新session
+        if (currentSessionId) {
+            requestBody.session_id = currentSessionId;
+        }
+        
         const response = await fetch('/api/query', {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
             },
-            body: JSON.stringify({
-                question: question,
-                role: role,
-                enable_rewrite: enableRewrite,
-                enable_rerank: enableRerank,
-                session_id: currentSessionId  // 传递当前session_id
-            })
+            body: JSON.stringify(requestBody)
         });
 
         if (!response.ok) {
@@ -452,10 +582,11 @@ function finishStreamingResponse(messageContent, assistantMessage, resultContent
     // 移除id，使其成为普通消息
     assistantMessage.removeAttribute('id');
     
-    // 更新全局session_id
+    // 更新全局session_id，并刷新session列表
     if (metadata.session_id) {
         currentSessionId = metadata.session_id;
-        loadConversationHistory();
+        // 刷新session列表（会更新active状态）
+        loadSessionList();
     }
     
     document.getElementById('loading').classList.remove('show');
@@ -495,10 +626,11 @@ async function handleJsonResponse(response, messageContent, assistantMessage, re
     document.getElementById('submitBtn').disabled = false;
 
     if (data.success) {
-        // 更新全局session_id
+        // 更新全局session_id，并刷新session列表
         if (data.session_id) {
             currentSessionId = data.session_id;
-            loadConversationHistory();
+            // 刷新session列表（会更新active状态）
+            loadSessionList();
         }
 
         // 移除加载指示器

@@ -48,7 +48,7 @@ class MemoryManager:
         """
         return get_or_create_session(user_id=user_id, session_id=session_id)
     
-    def save_user_query(self, session_id: str, turn_id: Optional[int] = None, content: str = "") -> Optional[int]:
+    def save_user_query(self, session_id: str, turn_id: Optional[int] = None, content: str = "", user_id: int = 10000) -> Optional[int]:
         """
         保存用户query到L1
         
@@ -56,11 +56,12 @@ class MemoryManager:
             session_id: session ID
             turn_id: 对话轮次编号（可选）
             content: 用户原始输入
+            user_id: 用户ID，用于创建session记录（默认10000）
         
         返回:
             Optional[int]: 保存成功返回turn_id，失败返回None
         """
-        return self.l1_memory.save_user_query(session_id=session_id, turn_id=turn_id, content=content)
+        return self.l1_memory.save_user_query(session_id=session_id, turn_id=turn_id, content=content, user_id=user_id)
     
     def save_assistant_answer(self, session_id: str, turn_id: Optional[int] = None, content: str = "") -> Optional[int]:
         """
